@@ -1,6 +1,6 @@
 # .gitleaksignore - Exclude test fixtures and mock data from Gitleaks secret scanning
 #
-# These are mock credentials used in unit tests and should not be flagged as security issues.
+# These are mock credentials used in local development environment and should not be flagged.
 # Real credentials should NEVER be committed to this repository.
 #
 # Documentation: https://github.com/gitleaks/gitleaks#gitleaksignore
@@ -9,7 +9,74 @@
 # Format: <file-path>:<rule-id>:<line-number>
 # To add new exclusions, run Gitleaks and copy the "Fingerprint:" from the finding.
 
-# Test fixtures will be added here after first scan if needed
+# Local development environment configurations (contrib/local-environment/)
+# These are test OAuth2 proxy configs, Dex configs, and Keycloak realm configs
+/repo/contrib/local-environment/dex.yaml:generic-api-key:25
+/repo/contrib/local-environment/keycloak/oauth2-proxy-realm.json:generic-api-key:447
+/repo/contrib/local-environment/keycloak/oauth2-proxy-realm.json:generic-api-key:494
+/repo/contrib/local-environment/keycloak/oauth2-proxy-realm.json:generic-api-key:547
+/repo/contrib/local-environment/keycloak/oauth2-proxy-realm.json:generic-api-key:586
+/repo/contrib/local-environment/keycloak/oauth2-proxy-realm.json:generic-api-key:625
+/repo/contrib/local-environment/keycloak/oauth2-proxy-realm.json:generic-api-key:662
+/repo/contrib/local-environment/keycloak/oauth2-proxy-realm.json:generic-api-key:719
+/repo/contrib/local-environment/kubernetes/values.yaml:generic-api-key:33
+/repo/contrib/local-environment/kubernetes/values.yaml:generic-api-key:51
+/repo/contrib/local-environment/kubernetes/values.yaml:generic-api-key:58
+/repo/contrib/local-environment/oauth2-proxy-alpha-config.cfg:generic-api-key:2
+/repo/contrib/local-environment/oauth2-proxy-alpha-config.yaml:generic-api-key:20
+/repo/contrib/local-environment/oauth2-proxy-gitea.cfg:generic-api-key:10
+/repo/contrib/local-environment/oauth2-proxy-gitea.cfg:generic-api-key:2
+/repo/contrib/local-environment/oauth2-proxy-keycloak.cfg:generic-api-key:10
+/repo/contrib/local-environment/oauth2-proxy-keycloak.cfg:generic-api-key:2
+/repo/contrib/local-environment/oauth2-proxy-nginx.cfg:generic-api-key:2
+/repo/contrib/local-environment/oauth2-proxy-nginx.cfg:generic-api-key:6
+/repo/contrib/local-environment/oauth2-proxy-traefik.cfg:generic-api-key:2
+/repo/contrib/local-environment/oauth2-proxy-traefik.cfg:generic-api-key:6
+/repo/contrib/local-environment/oauth2-proxy.cfg:generic-api-key:10
+/repo/contrib/local-environment/oauth2-proxy.cfg:generic-api-key:2
+
+# Example README files with JWT tokens for documentation
+/repo/kube-rbac-proxy/examples/non-resource-url-token-request/README.md:jwt:209
+/repo/kube-rbac-proxy/examples/non-resource-url-token-request/README.md:jwt:285
+/repo/kube-rbac-proxy/examples/non-resource-url/README.md:jwt:164
+/repo/kube-rbac-proxy/examples/resource-attributes/README.md:jwt:187
+
+# Test certificates and keys
+/repo/kube-rbac-proxy/test/e2e/clientcertificates/certificate.yaml:kubernetes-secret-yaml:2
+/repo/kube-rbac-proxy/test/e2e/clientcertificates/certificate.yaml:private-key:8
+
+# Unit test mock credentials
+/repo/main_test.go:generic-api-key:120
+/repo/main_test.go:generic-api-key:161
+/repo/main_test.go:generic-api-key:29
+/repo/main_test.go:generic-api-key:77
+/repo/main_test.go:generic-api-key:96
+/repo/oauthproxy_test.go:generic-api-key:1603
+/repo/oauthproxy_test.go:generic-api-key:1609
+/repo/oauthproxy_test.go:generic-api-key:3482
+/repo/oauthproxy_test.go:generic-api-key:35
+/repo/oauthproxy_test.go:generic-api-key:36
+/repo/oauthproxy_test.go:generic-api-key:38
+/repo/pkg/cookies/cookies_suite_test.go:generic-api-key:16
+/repo/pkg/cookies/cookies_test.go:generic-api-key:94
+/repo/pkg/encryption/cipher_test.go:generic-api-key:14
+/repo/pkg/encryption/cipher_test.go:generic-api-key:31
+/repo/pkg/middleware/jwt_session_test.go:generic-api-key:46
+/repo/pkg/middleware/jwt_session_test.go:generic-api-key:53
+/repo/pkg/middleware/jwt_session_test.go:jwt-base64:53
+/repo/pkg/middleware/oauth_session_test.go:curl-auth-user:243
+/repo/pkg/middleware/oauth_session_test.go:curl-auth-user:323
+/repo/pkg/middleware/oauth_session_test.go:jwt:26
+/repo/pkg/sessions/redis/redis_store_test.go:generic-api-key:18
+/repo/pkg/validation/cookie_test.go:generic-api-key:20
+/repo/pkg/validation/cookie_test.go:generic-api-key:22
+/repo/pkg/validation/options_test.go:generic-api-key:103
+/repo/pkg/validation/options_test.go:generic-api-key:107
+/repo/pkg/validation/options_test.go:generic-api-key:16
+/repo/pkg/validation/options_test.go:generic-api-key:78
+/repo/pkg/validation/options_test.go:generic-api-key:91
+/repo/pkg/validation/options_test.go:generic-api-key:95
+/repo/pkg/validation/options_test.go:generic-api-key:99
 
 # Note: This file should be reviewed regularly to ensure test data exclusions remain appropriate.
 # Production code and configuration files are still scanned for secrets.
