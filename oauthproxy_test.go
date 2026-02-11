@@ -413,7 +413,7 @@ func (patTest *PassAccessTokenTest) getCallbackEndpoint() (httpCode int, cookie 
 		http.MethodGet,
 		fmt.Sprintf(
 			"/oauth2/callback?code=callback_code&state=%s",
-			encodeState(csrf.HashOAuthState(), "%2F", false),
+			encodeState(csrf.HashOAuthState(), "%2F", false, false),
 		),
 		strings.NewReader(""),
 	)
@@ -3298,23 +3298,48 @@ func TestStateEncodesCorrectly(t *testing.T) {
 	state := "some_state_to_test"
 	nonce := "some_nonce_to_test"
 
-	encodedResult := encodeState(nonce, state, true)
-	assert.Equal(t, "c29tZV9ub25jZV90b190ZXN0OnNvbWVfc3RhdGVfdG9fdGVzdA", encodedResult)
+	// Test encoding without retry
+	encodedResult := encodeState(nonce, state, false, true)
+	assert.Equal(t, "c29tZV9ub25jZV90b190ZXN0OnNvbWVfc3RhdGVfdG9fdGVzdDow", encodedResult)
 
-	notEncodedResult := encodeState(nonce, state, false)
-	assert.Equal(t, "some_nonce_to_test:some_state_to_test", notEncodedResult)
+	notEncodedResult := encodeState(nonce, state, false, false)
+	assert.Equal(t, "some_nonce_to_test:some_state_to_test:0", notEncodedResult)
+
+	// Test encoding with retry
+	encodedResultRetry := encodeState(nonce, state, true, true)
+	assert.Equal(t, "c29tZV9ub25jZV90b190ZXN0OnNvbWVfc3RhdGVfdG9fdGVzdDox", encodedResultRetry)
+
+	notEncodedResultRetry := encodeState(nonce, state, true, false)
+	assert.Equal(t, "some_nonce_to_test:some_state_to_test:1", notEncodedResultRetry)
 }
 
 func TestStateDecodesCorrectly(t *testing.T) {
-	nonce, redirect, _ := decodeState("c29tZV9ub25jZV90b190ZXN0OnNvbWVfc3RhdGVfdG9fdGVzdA", true)
-
+	// Test decoding with retry marker (new format)
+	nonce, redirect, isRetry, err := decodeState("c29tZV9ub25jZV90b190ZXN0OnNvbWVfc3RhdGVfdG9fdGVzdDow", true)
+	assert.NoError(t, err)
 	assert.Equal(t, "some_nonce_to_test", nonce)
 	assert.Equal(t, "some_state_to_test", redirect)
+	assert.False(t, isRetry)
 
-	nonce2, redirect2, _ := decodeState("some_nonce_to_test:some_state_to_test", false)
-
+	nonce2, redirect2, isRetry2, err2 := decodeState("some_nonce_to_test:some_state_to_test:0", false)
+	assert.NoError(t, err2)
 	assert.Equal(t, "some_nonce_to_test", nonce2)
 	assert.Equal(t, "some_state_to_test", redirect2)
+	assert.False(t, isRetry2)
+
+	// Test decoding with retry=true
+	nonce3, redirect3, isRetry3, err3 := decodeState("some_nonce_to_test:some_state_to_test:1", false)
+	assert.NoError(t, err3)
+	assert.Equal(t, "some_nonce_to_test", nonce3)
+	assert.Equal(t, "some_state_to_test", redirect3)
+	assert.True(t, isRetry3)
+
+	// Test backwards compatibility: old format without retry marker
+	nonce4, redirect4, isRetry4, err4 := decodeState("some_nonce_to_test:some_state_to_test", false)
+	assert.NoError(t, err4)
+	assert.Equal(t, "some_nonce_to_test", nonce4)
+	assert.Equal(t, "some_state_to_test", redirect4)
+	assert.False(t, isRetry4) // Should default to false for backwards compatibility
 }
 
 func TestAuthOnlyAllowedEmails(t *testing.T) {
@@ -3529,7 +3554,8 @@ func TestRedactSensitiveQueryParams(t *testing.T) {
 
 // TestOAuthCallbackMissingCSRFRedirectsToSignIn verifies that when the OAuth callback
 // is hit without a valid CSRF cookie (e.g. expired or missing after idle), the proxy
-// redirects to the sign-in page with rd and error=cookies.SignInErrorParamCSRFExpired so the user can retry.
+// initiates an automatic retry on the first attempt, and only redirects to sign-in page
+// if the retry also fails.
 // By default (DisableRedirectOnCSRFError false) the proxy redirects; this test relies on that default.
 func TestOAuthCallbackMissingCSRFRedirectsToSignIn(t *testing.T) {
 	opts := baseTestOptions()
@@ -3540,21 +3566,41 @@ func TestOAuthCallbackMissingCSRFRedirectsToSignIn(t *testing.T) {
 	proxy, err := NewOAuthProxy(opts, func(string) bool { return true }, nil)
 	require.NoError(t, err)
 
-	// Valid state format: "nonce:redirect". Redirect "/" is allowed. No CSRF cookie.
-	state := "s2LEyNaz5kZdULSx3d9jmupR1rR5mzhg:/"
-	callbackURL := fmt.Sprintf("/oauth2/callback?code=test-code&state=%s", url.QueryEscape(state))
+	t.Run("first CSRF failure triggers auto-retry", func(t *testing.T) {
+		// Valid state format: "nonce:redirect:0" (isRetry=false). Redirect "/" is allowed. No CSRF cookie.
+		state := "s2LEyNaz5kZdULSx3d9jmupR1rR5mzhg:/:0"
+		callbackURL := fmt.Sprintf("/oauth2/callback?code=test-code&state=%s", url.QueryEscape(state))
 
-	req := httptest.NewRequest(http.MethodGet, callbackURL, nil)
-	rw := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, callbackURL, nil)
+		rw := httptest.NewRecorder()
 
-	proxy.ServeHTTP(rw, req)
+		proxy.ServeHTTP(rw, req)
 
-	assert.Equal(t, http.StatusFound, rw.Code, "callback without CSRF cookie should redirect to sign-in")
-	loc := rw.Header().Get("Location")
-	require.NotEmpty(t, loc, "redirect should have Location header")
-	assert.Contains(t, loc, "/oauth2/sign_in", "redirect should go to sign-in page")
-	assert.Contains(t, loc, "error="+cookies.SignInErrorParamCSRFExpired, "redirect should include CSRF-expired error param")
-	assert.Contains(t, loc, "rd=", "redirect should include rd (redirect target)")
+		assert.Equal(t, http.StatusFound, rw.Code, "callback without CSRF cookie should redirect for auto-retry")
+		loc := rw.Header().Get("Location")
+		require.NotEmpty(t, loc, "redirect should have Location header")
+		assert.Contains(t, loc, "/oauth2/start", "redirect should go to /oauth2/start for auto-retry")
+		assert.Contains(t, loc, "csrf_retry=1", "redirect should include csrf_retry=1 parameter")
+		assert.Contains(t, loc, "rd=", "redirect should include rd (redirect target)")
+	})
+
+	t.Run("second CSRF failure (retry failed) redirects to sign-in", func(t *testing.T) {
+		// Valid state format: "nonce:redirect:1" (isRetry=true). Redirect "/" is allowed. No CSRF cookie.
+		state := "s2LEyNaz5kZdULSx3d9jmupR1rR5mzhg:/:1"
+		callbackURL := fmt.Sprintf("/oauth2/callback?code=test-code&state=%s", url.QueryEscape(state))
+
+		req := httptest.NewRequest(http.MethodGet, callbackURL, nil)
+		rw := httptest.NewRecorder()
+
+		proxy.ServeHTTP(rw, req)
+
+		assert.Equal(t, http.StatusFound, rw.Code, "callback without CSRF cookie after retry should redirect to sign-in")
+		loc := rw.Header().Get("Location")
+		require.NotEmpty(t, loc, "redirect should have Location header")
+		assert.Contains(t, loc, "/oauth2/sign_in", "redirect should go to sign-in page")
+		assert.Contains(t, loc, "error="+cookies.SignInErrorParamCSRFExpired, "redirect should include CSRF-expired error param")
+		assert.Contains(t, loc, "rd=", "redirect should include rd (redirect target)")
+	})
 }
 
 // TestOAuthCallbackMissingCSRFReturns403WhenRedirectDisabled verifies that when

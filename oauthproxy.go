@@ -1067,9 +1067,12 @@ func (p *OAuthProxy) doOAuthStart(rw http.ResponseWriter, req *http.Request, ove
 	}
 
 	callbackRedirect := p.getOAuthRedirectURI(req)
+	// Check if this is a CSRF retry attempt (from query parameter)
+	isRetry := req.URL.Query().Get("csrf_retry") == "1"
+
 	loginURL := p.provider.GetLoginURL(
 		callbackRedirect,
-		encodeState(csrf.HashOAuthState(), appRedirect, p.encodeState),
+		encodeState(csrf.HashOAuthState(), appRedirect, isRetry, p.encodeState),
 		csrf.HashOIDCNonce(),
 		extraParams,
 	)
@@ -1103,7 +1106,7 @@ func (p *OAuthProxy) OAuthCallback(rw http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	nonce, appRedirect, err := decodeState(req.Form.Get("state"), p.encodeState)
+	nonce, appRedirect, isRetry, err := decodeState(req.Form.Get("state"), p.encodeState)
 	if err != nil {
 		logger.Errorf("Error while parsing OAuth2 state: %v", err)
 		p.ErrorPage(rw, req, http.StatusInternalServerError, err.Error())
@@ -1119,8 +1122,20 @@ func (p *OAuthProxy) OAuthCallback(rw http.ResponseWriter, req *http.Request) {
 		// Try to log the INs and OUTs of OAuthProxy, to be easier to analyse these issues.
 		LoggingCSRFCookiesInOAuthCallback(req, cookieName)
 		logger.Println(req, logger.AuthFailure, "Invalid authentication via OAuth2: unable to obtain CSRF cookie: %s (state=%s)", err, nonce)
+
 		if p.redirectOnCSRFError {
-			p.redirectToSignInWithCSRFError(rw, req, appRedirect)
+			// Auto-retry mechanism: if this is the first CSRF failure, attempt automatic retry
+			if !isRetry {
+				// First CSRF expiry - initiate automatic retry
+				logger.Printf("CSRF expired, initiating auto-retry: rd=%s", appRedirect)
+				retryURL := fmt.Sprintf("%s/oauth2/start?rd=%s&csrf_retry=1",
+					p.ProxyPrefix, url.QueryEscape(appRedirect))
+				http.Redirect(rw, req, retryURL, http.StatusFound)
+			} else {
+				// Auto-retry already failed - redirect to sign-in page for manual retry
+				logger.Printf("CSRF retry failed (already attempted), redirecting to sign-in: rd=%s", appRedirect)
+				p.redirectToSignInWithCSRFError(rw, req, appRedirect)
+			}
 		} else {
 			p.ErrorPage(rw, req, http.StatusForbidden, err.Error(), "Login Failed: Unable to find a valid CSRF token. Please try again.")
 		}
@@ -1480,8 +1495,12 @@ func checkAllowedEmails(req *http.Request, s *sessionsapi.SessionState) bool {
 
 // encodeState builds the OAuth state param out of our nonce and
 // original application redirect
-func encodeState(nonce string, redirect string, encode bool) string {
-	rawString := fmt.Sprintf("%v:%v", nonce, redirect)
+func encodeState(nonce string, redirect string, isRetry bool, encode bool) string {
+	retryMarker := "0"
+	if isRetry {
+		retryMarker = "1"
+	}
+	rawString := fmt.Sprintf("%v:%v:%v", nonce, redirect, retryMarker)
 	if encode {
 		return base64.RawURLEncoding.EncodeToString([]byte(rawString))
 	}
@@ -1489,19 +1508,25 @@ func encodeState(nonce string, redirect string, encode bool) string {
 }
 
 // decodeState splits the reflected OAuth state response back into
-// the nonce and original application redirect
-func decodeState(state string, encode bool) (string, string, error) {
+// the nonce, original application redirect, and retry flag
+func decodeState(state string, encode bool) (nonce string, redirect string, isRetry bool, err error) {
 	toParse := state
 	if encode {
 		decoded, _ := base64.RawURLEncoding.DecodeString(state)
 		toParse = string(decoded)
 	}
 
-	parsedState := strings.SplitN(toParse, ":", 2)
-	if len(parsedState) != 2 {
-		return "", "", errors.New("invalid length")
+	parsedState := strings.SplitN(toParse, ":", 3)
+	if len(parsedState) == 3 {
+		// New format with retry flag
+		isRetry = parsedState[2] == "1"
+		return parsedState[0], parsedState[1], isRetry, nil
+	} else if len(parsedState) == 2 {
+		// Backwards compatibility: old format without retry flag
+		return parsedState[0], parsedState[1], false, nil
 	}
-	return parsedState[0], parsedState[1], nil
+
+	return "", "", false, errors.New("invalid state format")
 }
 
 // addHeadersForProxying adds the appropriate headers the request / response for proxying
